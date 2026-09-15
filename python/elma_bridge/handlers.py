@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import plistlib
+import time
 import urllib.request
 from typing import Any, Callable
 
@@ -55,21 +56,36 @@ class ElmaError(Exception):
 
 
 class _Connection:
-    """Holds one open lockdown connection to a device."""
+    """Holds one open lockdown connection, shared by short calls.
+
+    Requests now run concurrently, so two of them reaching the same connection
+    at once would interleave on the wire. Short calls take the lock; long ones
+    (backup, restore) ask for a connection of their own instead, so a backup
+    doesn't block the device list behind it for minutes.
+    """
 
     def __init__(self) -> None:
         self._lockdown = None
         self._udid: str | None = None
+        self._lock = asyncio.Lock()
 
     async def get(self, udid: str | None = None):
-        if self._lockdown is not None and (udid is None or udid == self._udid):
+        async with self._lock:
+            if self._lockdown is not None and (udid is None or udid == self._udid):
+                return self._lockdown
+            try:
+                self._lockdown = await create_using_usbmux(serial=udid)
+                self._udid = self._lockdown.udid
+            except Exception as e:
+                raise ElmaError("device_not_found", f"could not connect: {e}") from e
             return self._lockdown
+
+    async def exclusive(self, udid: str | None = None):
+        """A fresh connection for an operation that holds it for a long time."""
         try:
-            self._lockdown = await create_using_usbmux(serial=udid)
-            self._udid = self._lockdown.udid
+            return await create_using_usbmux(serial=udid)
         except Exception as e:
             raise ElmaError("device_not_found", f"could not connect: {e}") from e
-        return self._lockdown
 
     async def close(self) -> None:
         if self._lockdown is not None:
@@ -348,25 +364,80 @@ def build_registry(emit: Callable[[str, Any], None]) -> dict[str, Callable]:
                             full: bool = True) -> dict:
         """Backs the device up into `directory`/<udid>.
 
-        Progress is streamed as events rather than returned, because a full
-        backup takes minutes and the UI needs to show movement.
+        The device link protocol only reports a completion percentage — there
+        is no byte count in it. So alongside the percentage we measure the
+        backup folder on disk, which gives a real transferred size and, once
+        the percentage moves, an estimate of what is left.
         """
-        ld = await conn.get(udid)
+        ld = await conn.exclusive(udid)
+        target = os.path.join(directory, ld.udid)
+        started = time.monotonic()
+
+        state = {"percent": 0.0, "bytes": 0, "stop": False}
+
+        def measure(path: str) -> int:
+            total = 0
+            for root, _dirs, files in os.walk(path):
+                for name in files:
+                    try:
+                        total += os.path.getsize(os.path.join(root, name))
+                    except OSError:
+                        pass  # file replaced mid-walk; not worth failing over
+            return total
+
+        async def watch_size() -> None:
+            """Walking the tree is too slow to do per progress event, so it
+            runs on its own slower cadence and the last figure is reused."""
+            while not state["stop"]:
+                state["bytes"] = await asyncio.to_thread(measure, target)
+                _emit_progress()
+                await asyncio.sleep(2)
+
+        def _emit_progress() -> None:
+            pct = state["percent"]
+            done = state["bytes"]
+            elapsed = time.monotonic() - started
+            # Below ~1% the extrapolation is meaningless, so leave it out.
+            total = int(done / (pct / 100)) if pct >= 1 and done else None
+            eta = None
+            if total and pct >= 1 and elapsed > 5:
+                eta = max(0, int(elapsed * (100 - pct) / pct))
+            emit("backup.progress", {
+                "percent": pct,
+                "bytes_done": done,
+                "bytes_total_estimate": total,
+                "eta_seconds": eta,
+                "elapsed_seconds": int(elapsed),
+            })
 
         def on_progress(percent) -> None:
             try:
-                emit("backup.progress", {"percent": float(percent)})
+                state["percent"] = float(percent)
             except (TypeError, ValueError):
-                pass  # the callback's payload shape isn't guaranteed
+                return
+            _emit_progress()
 
-        async with Mobilebackup2Service(lockdown=ld) as svc:
+        watcher = asyncio.create_task(watch_size())
+        try:
+            async with Mobilebackup2Service(lockdown=ld) as svc:
+                try:
+                    await svc.backup(full=full, backup_directory=directory,
+                                     progress_callback=on_progress)
+                except Exception as e:
+                    raise ElmaError("backup_failed", str(e)) from e
+        finally:
+            state["stop"] = True
+            watcher.cancel()
             try:
-                await svc.backup(full=full, backup_directory=directory,
-                                 progress_callback=on_progress)
-            except Exception as e:
-                raise ElmaError("backup_failed", str(e)) from e
+                await ld.close()
+            except Exception:
+                pass
 
-        return {"directory": directory, "udid": ld.udid}
+        return {
+            "directory": directory,
+            "udid": ld.udid,
+            "bytes": await asyncio.to_thread(measure, target),
+        }
 
     async def backup_info(directory: str, udid: str | None = None) -> dict:
         """Reads a backup's metadata without restoring it."""
@@ -446,11 +517,22 @@ def build_registry(emit: Callable[[str, Any], None]) -> dict[str, Callable]:
         """
         ld = await conn.get(udid)
 
+        started = time.monotonic()
+
         def on_progress(percent) -> None:
             try:
-                emit("restore.progress", {"percent": float(percent)})
+                pct = float(percent)
             except (TypeError, ValueError):
-                pass
+                return
+            elapsed = time.monotonic() - started
+            eta = None
+            if pct >= 1 and elapsed > 5:
+                eta = max(0, int(elapsed * (100 - pct) / pct))
+            emit("restore.progress", {
+                "percent": pct,
+                "eta_seconds": eta,
+                "elapsed_seconds": int(elapsed),
+            })
 
         async with Mobilebackup2Service(lockdown=ld) as svc:
             try:
@@ -472,6 +554,11 @@ def build_registry(emit: Callable[[str, Any], None]) -> dict[str, Callable]:
                         if "password" in text.lower() or "decrypt" in text.lower()
                         else "restore_failed")
                 raise ElmaError(kind, text) from e
+            finally:
+                try:
+                    await ld.close()
+                except Exception:
+                    pass
 
         return {"directory": directory, "udid": ld.udid, "rebooted": reboot}
 

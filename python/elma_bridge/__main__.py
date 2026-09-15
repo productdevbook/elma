@@ -30,6 +30,28 @@ def _emit(event: str, data: Any) -> None:
     _write({"event": event, "data": data})
 
 
+async def _dispatch(fn, req_id, params: dict) -> None:
+    """Runs one request and writes its reply, whatever the outcome.
+
+    Every path here ends in a response: a request that never gets answered
+    leaves the caller waiting forever, which is worse than an error.
+    """
+    try:
+        result = await fn(**params)
+        _write({"id": req_id, "ok": True, "result": result})
+    except handlers.ElmaError as e:
+        _write({"id": req_id, "ok": False,
+                "error": {"kind": e.kind, "message": str(e)}})
+    except asyncio.CancelledError:
+        _write({"id": req_id, "ok": False,
+                "error": {"kind": "cancelled", "message": "operation cancelled"}})
+        raise
+    except Exception as e:  # unexpected — trace to stderr, summary to caller
+        traceback.print_exc(file=sys.stderr)
+        _write({"id": req_id, "ok": False,
+                "error": {"kind": "unexpected", "message": str(e)}})
+
+
 async def _serve() -> int:
     registry = handlers.build_registry(emit=_emit)
     loop = asyncio.get_running_loop()
@@ -61,16 +83,10 @@ async def _serve() -> int:
                               "message": f"no such method: {method}"}})
             continue
 
-        try:
-            result = await fn(**params)
-            _write({"id": req_id, "ok": True, "result": result})
-        except handlers.ElmaError as e:
-            _write({"id": req_id, "ok": False,
-                    "error": {"kind": e.kind, "message": str(e)}})
-        except Exception as e:  # unexpected — trace to stderr, summary to caller
-            traceback.print_exc(file=sys.stderr)
-            _write({"id": req_id, "ok": False,
-                    "error": {"kind": "unexpected", "message": str(e)}})
+        # Each call runs as its own task. A long one (a backup runs for
+        # minutes) must not stop later requests from being read and answered —
+        # otherwise one slow or stuck call freezes the whole UI.
+        asyncio.create_task(_dispatch(fn, req_id, params))
 
     return 0
 
