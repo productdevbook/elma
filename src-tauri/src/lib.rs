@@ -8,8 +8,17 @@ use std::sync::Arc;
 
 use tauri::{Emitter, Manager, State};
 
+/// The bridge is created inside the async runtime (tokio's process API needs a
+/// reactor), so commands may run before it exists. They wait on this cell
+/// rather than racing setup.
 struct AppState {
-    bridge: Bridge,
+    bridge: tokio::sync::OnceCell<Bridge>,
+}
+
+impl AppState {
+    async fn bridge(&self) -> Result<&Bridge, BridgeError> {
+        self.bridge.get().ok_or(BridgeError::Closed)
+    }
 }
 
 /// Every command is a thin pass-through: the Python side owns the protocol
@@ -23,7 +32,8 @@ macro_rules! forward {
             params: Option<Value>,
         ) -> Result<Value, BridgeError> {
             state
-                .bridge
+                .bridge()
+                .await?
                 .call($method, params.unwrap_or(Value::Object(Default::default())))
                 .await
         }
@@ -64,8 +74,23 @@ pub fn run() {
                 let _ = handle.emit(&name, data);
             });
 
-            let bridge = Bridge::spawn(&python, &cwd, sink)?;
-            app.manage(AppState { bridge });
+            app.manage(AppState { bridge: tokio::sync::OnceCell::new() });
+
+            // Spawning the bridge touches tokio's process API, which needs a
+            // running reactor — setup() has none, so defer onto the runtime.
+            let handle2 = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                match Bridge::spawn(&python, &cwd, sink) {
+                    Ok(b) => {
+                        let state = handle2.state::<AppState>();
+                        let _ = state.bridge.set(b);
+                        let _ = handle2.emit("bridge.ready", ());
+                    }
+                    Err(e) => {
+                        let _ = handle2.emit("bridge.failed", e.to_string());
+                    }
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
