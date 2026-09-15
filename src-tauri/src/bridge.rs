@@ -50,6 +50,7 @@ struct Response {
     result: Option<Value>,
     error: Option<ResponseError>,
     event: Option<String>,
+    data: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -59,6 +60,10 @@ struct ResponseError {
 }
 
 type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, BridgeError>>>>>;
+
+/// Called for every `{"event": ...}` line the bridge emits. Used to forward
+/// progress out to the webview; the bridge itself stays UI-agnostic.
+pub type EventSink = Arc<dyn Fn(String, Value) + Send + Sync>;
 
 pub struct Bridge {
     stdin: Mutex<ChildStdin>,
@@ -70,7 +75,11 @@ pub struct Bridge {
 impl Bridge {
     /// Spawns the bridge and starts the reader task that fans responses
     /// back out to whoever is waiting on each id.
-    pub fn spawn(python: &str, cwd: &std::path::Path) -> Result<Self, BridgeError> {
+    pub fn spawn(
+        python: &str,
+        cwd: &std::path::Path,
+        on_event: EventSink,
+    ) -> Result<Self, BridgeError> {
         let mut child = Command::new(python)
             .arg("-m")
             .arg("elma_bridge")
@@ -92,8 +101,9 @@ impl Bridge {
                 let Ok(resp) = serde_json::from_str::<Response>(&line) else {
                     continue;
                 };
-                // Events carry no id and nobody is awaiting them.
-                if resp.event.is_some() {
+                // Events carry no id; hand them to the sink instead.
+                if let Some(name) = resp.event {
+                    on_event(name, resp.data.unwrap_or(Value::Null));
                     continue;
                 }
                 let Some(id) = resp.id else { continue };

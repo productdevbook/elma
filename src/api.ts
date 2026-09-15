@@ -57,6 +57,15 @@ export interface BridgeError {
   message: string
 }
 
+export interface BackupEncryption {
+  enabled: boolean
+}
+
+export interface BackupResult {
+  directory: string
+  udid: string
+}
+
 export const api = {
   deviceList: () => invoke<Device[]>('device_list'),
   deviceInfo: (udid?: string) => invoke<DeviceInfo>('device_info', { params: { udid } }),
@@ -66,4 +75,8 @@ export const api = {
     invoke<FileEntry[]>('file_list', { params: { path, udid } }),
   signedVersions: (model: string) =>
     invoke<SignedVersion[]>('ios_signed_versions', { params: { model } }),
+  backupEncryption: (udid?: string) =>
+    invoke<BackupEncryption>('backup_encryption', { params: { udid } }),
+  backupCreate: (directory: string, udid?: string, full = true) =>
+    invoke<BackupResult>('backup_create', { params: { directory, udid, full } }),
 }

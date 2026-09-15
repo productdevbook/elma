@@ -5,8 +5,9 @@ import AppsView from './views/AppsView.vue'
 import FilesView from './views/FilesView.vue'
 import InfoView from './views/InfoView.vue'
 import VersionsView from './views/VersionsView.vue'
+import BackupView from './views/BackupView.vue'
 
-type Tab = 'info' | 'apps' | 'files' | 'versions'
+type Tab = 'info' | 'apps' | 'files' | 'backup' | 'versions'
 
 const devices = ref<Device[]>([])
 const selected = ref<Device | null>(null)
@@ -18,6 +19,7 @@ const tabs: { id: Tab; label: string }[] = [
   { id: 'info', label: 'Device' },
   { id: 'apps', label: 'Apps' },
   { id: 'files', label: 'Files' },
+  { id: 'backup', label: 'Backup' },
   { id: 'versions', label: 'iOS versions' },
 ]
 
@@ -84,6 +86,7 @@ onMounted(refresh)
         <InfoView v-if="tab === 'info'" :udid="selected.udid" />
         <AppsView v-else-if="tab === 'apps'" :udid="selected.udid" />
         <FilesView v-else-if="tab === 'files'" :udid="selected.udid" />
+        <BackupView v-else-if="tab === 'backup'" :udid="selected.udid" />
         <VersionsView v-else :model="selected.model" />
       </main>
     </template>

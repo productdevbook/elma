@@ -15,6 +15,9 @@ actually on the device.
   won't come back on their own after a wipe. Exports to CSV.
 - **Files** — browse the media area (DCIM, Downloads, Books) over AFC.
 - **Device** — model, iOS build, serial, capacity, activation state.
+- **Backup** — full device backup with live progress, and an upfront warning
+  when backup encryption is off, since that silently drops saved passwords,
+  Wi-Fi networks and Health data.
 - **iOS versions** — which builds Apple currently signs for the connected
   device, fetched live.
 

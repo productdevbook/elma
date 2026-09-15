@@ -18,6 +18,7 @@ from pymobiledevice3.lockdown import create_using_usbmux
 from pymobiledevice3.usbmux import list_devices
 from pymobiledevice3.services.installation_proxy import InstallationProxyService
 from pymobiledevice3.services.afc import AfcService
+from pymobiledevice3.services.mobilebackup2 import Mobilebackup2Service
 
 
 class ElmaError(Exception):
@@ -212,10 +213,58 @@ def build_registry(emit: Callable[[str, Any], None]) -> dict[str, Callable]:
             if f.get("signed")
         ]
 
+    # --- backup ---------------------------------------------------------
+
+    async def backup_create(directory: str, udid: str | None = None,
+                            full: bool = True) -> dict:
+        """Backs the device up into `directory`/<udid>.
+
+        Progress is streamed as events rather than returned, because a full
+        backup takes minutes and the UI needs to show movement.
+        """
+        ld = await conn.get(udid)
+
+        def on_progress(percent) -> None:
+            try:
+                emit("backup.progress", {"percent": float(percent)})
+            except (TypeError, ValueError):
+                pass  # the callback's payload shape isn't guaranteed
+
+        async with Mobilebackup2Service(lockdown=ld) as svc:
+            try:
+                await svc.backup(full=full, backup_directory=directory,
+                                 progress_callback=on_progress)
+            except Exception as e:
+                raise ElmaError("backup_failed", str(e)) from e
+
+        return {"directory": directory, "udid": ld.udid}
+
+    async def backup_info(directory: str, udid: str | None = None) -> dict:
+        """Reads a backup's metadata without restoring it."""
+        ld = await conn.get(udid)
+        async with Mobilebackup2Service(lockdown=ld) as svc:
+            try:
+                return await svc.info(backup_directory=directory)
+            except Exception as e:
+                raise ElmaError("backup_unreadable", str(e)) from e
+
+    async def backup_encryption(udid: str | None = None) -> dict:
+        """Whether the device encrypts its backups.
+
+        This matters before a wipe: an unencrypted backup silently drops
+        Health data, saved passwords and Wi-Fi networks.
+        """
+        ld = await conn.get(udid)
+        async with Mobilebackup2Service(lockdown=ld) as svc:
+            return {"enabled": bool(await svc.get_will_encrypt())}
+
     return {
         "device.list": device_list,
         "device.info": device_info,
         "app.list": app_list,
         "file.list": file_list,
         "ios.signedVersions": signed_versions,
+        "backup.create": backup_create,
+        "backup.info": backup_info,
+        "backup.encryption": backup_encryption,
     }
