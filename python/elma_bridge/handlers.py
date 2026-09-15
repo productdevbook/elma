@@ -21,6 +21,26 @@ from pymobiledevice3.services.afc import AfcService
 from pymobiledevice3.services.mobilebackup2 import Mobilebackup2Service
 
 
+# lockdown reports a board identifier (iPhone17,5); people know the retail
+# name. Only the models likely to show up are listed — unknown ones fall back
+# to the identifier rather than guessing.
+_MARKETING = {
+    "iPhone17,5": "iPhone 16e",
+    "iPhone17,3": "iPhone 16",
+    "iPhone17,4": "iPhone 16 Plus",
+    "iPhone17,1": "iPhone 16 Pro",
+    "iPhone17,2": "iPhone 16 Pro Max",
+    "iPhone16,1": "iPhone 15 Pro",
+    "iPhone16,2": "iPhone 15 Pro Max",
+    "iPhone15,4": "iPhone 15",
+    "iPhone15,5": "iPhone 15 Plus",
+    "iPhone14,7": "iPhone 14",
+    "iPhone14,8": "iPhone 14 Plus",
+    "iPhone15,2": "iPhone 14 Pro",
+    "iPhone15,3": "iPhone 14 Pro Max",
+}
+
+
 class ElmaError(Exception):
     """A user-facing error. `kind` drives how the UI reacts."""
 
@@ -111,22 +131,53 @@ def build_registry(emit: Callable[[str, Any], None]) -> dict[str, Callable]:
 
     async def device_info(udid: str | None = None) -> dict:
         """Detailed device info. The raw lockdown payload is huge, so we
-        pick the fields the UI actually renders."""
+        pick the fields the UI actually renders.
+
+        Storage and battery live in their own domains and are queried
+        separately; a device can refuse either without the rest failing.
+        """
         ld = await conn.get(udid)
         v = await ld.get_value()
+
+        storage: dict = {}
+        try:
+            d = await ld.get_value(domain="com.apple.disk_usage")
+            total = d.get("TotalDiskCapacity")
+            free = d.get("AmountDataAvailable")
+            if total and free is not None:
+                storage = {
+                    "total_bytes": total,
+                    "free_bytes": free,
+                    "used_bytes": total - free,
+                }
+        except Exception:
+            pass
+
+        battery: dict = {}
+        try:
+            b = await ld.get_value(domain="com.apple.mobile.battery")
+            battery = {
+                "percent": b.get("BatteryCurrentCapacity"),
+                "charging": bool(b.get("BatteryIsCharging")),
+                "plugged_in": bool(b.get("ExternalConnected")),
+            }
+        except Exception:
+            pass
+
         return {
             "udid": v.get("UniqueDeviceID"),
             "name": v.get("DeviceName"),
             "model": v.get("ProductType"),
+            "marketing_name": _MARKETING.get(v.get("ProductType", ""), None),
             "version": v.get("ProductVersion"),
             "build": v.get("BuildVersion"),
             "serial": v.get("SerialNumber"),
             "color": v.get("DeviceColor"),
-            "capacity_bytes": v.get("TotalDiskCapacity"),
-            "battery_percent": v.get("BatteryCurrentCapacity"),
             "activation": v.get("ActivationState"),
             "wifi_mac": v.get("WiFiAddress"),
             "bluetooth_mac": v.get("BluetoothAddress"),
+            "storage": storage,
+            "battery": battery,
         }
 
     # --- apps ----------------------------------------------------------

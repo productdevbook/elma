@@ -10,18 +10,32 @@ export interface Device {
   paired: boolean
 }
 
+export interface Storage {
+  total_bytes: number
+  free_bytes: number
+  used_bytes: number
+}
+
+export interface Battery {
+  percent: number | null
+  charging: boolean
+  plugged_in: boolean
+}
+
 export interface DeviceInfo {
   udid: string
   name: string
   model: string
+  marketing_name: string | null
   version: string
   build: string
   serial: string
-  capacity_bytes: number | null
-  battery_percent: number | null
+  color: string | null
   activation: string
   wifi_mac: string
   bluetooth_mac: string
+  storage: Storage | Record<string, never>
+  battery: Battery | Record<string, never>
 }
 
 export interface App {

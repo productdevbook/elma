@@ -37,9 +37,11 @@ cd python && pip install -e . && cd ..
 bun run app
 ```
 
-`bun run typecheck` checks the `.ts` sources. Types inside `.vue` single-file
-components are handled by the editor (Volar) rather than a build step — the
-checker for those, `vue-tsc`, doesn't support TypeScript 7 yet.
+`bun run typecheck` runs TypeScript 7 over the sources. The `typescript`
+dependency is pinned to 5.x because `@vue/compiler-sfc` drives the compiler
+through its JS API to resolve the prop types shadcn components inherit from
+reka-ui, and TypeScript 7 replaced that API with a native binary — it now
+exports two symbols. Once Vue supports it, the pin goes away.
 
 The Rust side spawns `python -m elma_bridge` and talks JSON-RPC to it over
 stdin/stdout. `ELMA_PYTHON` and `ELMA_BRIDGE_DIR` override the interpreter and
@@ -48,7 +50,7 @@ the bridge directory.
 ## Architecture
 
 ```
-Vue 3 + TypeScript        UI
+Vue 3 + Tailwind 4 + shadcn-vue   UI
    ↓ invoke()
 Rust (Tauri 2)            command routing, process supervision
    ↓ JSON-RPC over stdio

@@ -1,27 +1,35 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
-import { api, type Device } from './api'
-import AppsView from './views/AppsView.vue'
-import FilesView from './views/FilesView.vue'
-import InfoView from './views/InfoView.vue'
-import VersionsView from './views/VersionsView.vue'
-import BackupView from './views/BackupView.vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { Smartphone, LayoutGrid, Grid3x3, FolderOpen, Archive, Download, RefreshCw } from 'lucide-vue-next'
+import { api, type Device, type DeviceInfo } from '@/api'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Skeleton } from '@/components/ui/skeleton'
+import { cn } from '@/lib/utils'
 
-type Tab = 'info' | 'apps' | 'files' | 'backup' | 'versions'
+import OverviewView from '@/views/OverviewView.vue'
+import AppsView from '@/views/AppsView.vue'
+import FilesView from '@/views/FilesView.vue'
+import BackupView from '@/views/BackupView.vue'
+import VersionsView from '@/views/VersionsView.vue'
+
+type Tab = 'overview' | 'apps' | 'files' | 'backup' | 'versions'
 
 const devices = ref<Device[]>([])
 const selected = ref<Device | null>(null)
-const tab = ref<Tab>('info')
-const error = ref<string | null>(null)
+const info = ref<DeviceInfo | null>(null)
+const appCount = ref<number | null>(null)
+const tab = ref<Tab>('overview')
 const loading = ref(false)
+const error = ref<string | null>(null)
 
-const tabs: { id: Tab; label: string }[] = [
-  { id: 'info', label: 'Device' },
-  { id: 'apps', label: 'Apps' },
-  { id: 'files', label: 'Files' },
-  { id: 'backup', label: 'Backup' },
-  { id: 'versions', label: 'iOS versions' },
-]
+const nav = [
+  { id: 'overview', label: 'Overview', icon: LayoutGrid },
+  { id: 'apps', label: 'Apps', icon: Grid3x3 },
+  { id: 'files', label: 'Files', icon: FolderOpen },
+  { id: 'backup', label: 'Backup', icon: Archive },
+  { id: 'versions', label: 'iOS', icon: Download },
+] as const
 
 async function refresh() {
   loading.value = true
@@ -29,8 +37,8 @@ async function refresh() {
   try {
     devices.value = await api.deviceList()
     // Keep the current selection if it's still plugged in.
-    const keep = devices.value.find(d => d.udid === selected.value?.udid)
-    selected.value = keep ?? devices.value[0] ?? null
+    selected.value = devices.value.find(d => d.udid === selected.value?.udid)
+      ?? devices.value[0] ?? null
   } catch (e: any) {
     error.value = e?.message ?? String(e)
   } finally {
@@ -38,97 +46,127 @@ async function refresh() {
   }
 }
 
-const unpaired = computed(() => selected.value && !selected.value.paired)
+/** Overview and the sidebar badge both need these, so they're fetched once
+ *  here rather than twice in two views. */
+async function loadDetail() {
+  info.value = null
+  appCount.value = null
+  if (!selected.value?.paired) return
+  try {
+    info.value = await api.deviceInfo(selected.value.udid)
+  } catch { /* the sidebar still works without it */ }
+  try {
+    appCount.value = (await api.appList('user', selected.value.udid)).length
+  } catch { /* count is decoration, not load-bearing */ }
+}
 
+const subtitle = computed(() => {
+  const d = selected.value
+  if (!d) return ''
+  const model = info.value?.marketing_name ?? d.model ?? 'Unknown'
+  return d.version ? `${model} · iOS ${d.version}` : model
+})
+
+watch(selected, loadDetail)
 onMounted(refresh)
 </script>
 
 <template>
-  <div class="shell">
-    <header>
-      <div class="brand">elma</div>
-      <select
-        v-if="devices.length"
-        :value="selected?.udid"
-        @change="selected = devices.find(d => d.udid === ($event.target as HTMLSelectElement).value) ?? null"
-      >
-        <option v-for="d in devices" :key="d.udid" :value="d.udid">
-          {{ d.name ?? d.udid }} — {{ d.model ?? '?' }}
-        </option>
-      </select>
-      <button :disabled="loading" @click="refresh">
-        {{ loading ? 'Scanning…' : 'Refresh' }}
-      </button>
-    </header>
+  <div class="flex h-full">
+    <!-- Sidebar -->
+    <aside class="flex w-56 shrink-0 flex-col border-r bg-sidebar">
+      <div class="flex items-center gap-2 px-4 py-3">
+        <div class="size-2 rounded-full" :class="selected ? 'bg-emerald-500' : 'bg-muted-foreground/40'" />
+        <span class="text-sm font-semibold tracking-tight">elma</span>
+        <Button
+          variant="ghost" size="icon"
+          class="ml-auto size-7"
+          :disabled="loading"
+          @click="refresh"
+        >
+          <RefreshCw :class="cn('size-3.5', loading && 'animate-spin')" />
+        </Button>
+      </div>
 
-    <p v-if="error" class="notice danger">{{ error }}</p>
+      <!-- Device card -->
+      <div class="mx-2 mb-2 rounded-lg border bg-card px-3 py-2.5">
+        <template v-if="selected">
+          <div class="flex items-start gap-2.5">
+            <Smartphone class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+            <div class="min-w-0">
+              <p class="truncate text-sm font-medium leading-tight">{{ selected.name ?? 'iPhone' }}</p>
+              <p class="mt-0.5 truncate text-xs text-muted-foreground">{{ subtitle }}</p>
+            </div>
+          </div>
+          <Badge v-if="!selected.paired" variant="destructive" class="mt-2 text-[10px]">
+            Not paired
+          </Badge>
+        </template>
+        <template v-else-if="loading">
+          <Skeleton class="h-4 w-28" />
+          <Skeleton class="mt-2 h-3 w-20" />
+        </template>
+        <p v-else class="text-xs text-muted-foreground">No device</p>
+      </div>
 
-    <div v-else-if="!devices.length" class="empty">
-      <p>No device found.</p>
-      <p class="muted">Connect an iPhone or iPad over USB and unlock it.</p>
-    </div>
-
-    <template v-else-if="selected">
-      <p v-if="unpaired" class="notice">
-        This device isn't paired yet. Unlock it and tap <strong>Trust</strong>, then refresh.
-      </p>
-
-      <nav>
+      <!-- Device switcher, only when it's an actual choice -->
+      <div v-if="devices.length > 1" class="px-2 pb-2">
         <button
-          v-for="t in tabs"
-          :key="t.id"
-          :class="{ primary: tab === t.id }"
-          @click="tab = t.id"
-        >{{ t.label }}</button>
+          v-for="d in devices" :key="d.udid"
+          class="w-full truncate rounded px-2 py-1 text-left text-xs hover:bg-sidebar-accent"
+          :class="d.udid === selected?.udid && 'bg-sidebar-accent font-medium'"
+          @click="selected = d"
+        >{{ d.name ?? d.udid }}</button>
+      </div>
+
+      <nav class="flex flex-col gap-0.5 px-2">
+        <button
+          v-for="n in nav" :key="n.id"
+          :disabled="!selected"
+          class="flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm transition-colors
+                 hover:bg-sidebar-accent disabled:pointer-events-none disabled:opacity-40"
+          :class="tab === n.id && 'bg-sidebar-accent font-medium'"
+          @click="tab = n.id as Tab"
+        >
+          <component :is="n.icon" class="size-4 text-muted-foreground" />
+          {{ n.label }}
+          <span v-if="n.id === 'apps' && appCount != null" class="ml-auto text-xs text-muted-foreground">
+            {{ appCount }}
+          </span>
+        </button>
       </nav>
 
-      <main>
-        <InfoView v-if="tab === 'info'" :udid="selected.udid" />
+      <p class="mt-auto px-4 py-3 text-[10px] text-muted-foreground">
+        Read-only. Does not erase or restore.
+      </p>
+    </aside>
+
+    <!-- Content -->
+    <main class="min-w-0 flex-1 overflow-y-auto">
+      <div v-if="error" class="p-6">
+        <p class="text-sm text-destructive">{{ error }}</p>
+      </div>
+
+      <div v-else-if="!devices.length && !loading" class="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
+        <Smartphone class="size-8 text-muted-foreground/40" />
+        <p class="text-sm font-medium">No device connected</p>
+        <p class="max-w-xs text-xs text-muted-foreground">
+          Plug in an iPhone or iPad over USB, unlock it, and tap Trust if asked.
+        </p>
+        <Button variant="outline" size="sm" class="mt-2" @click="refresh">Scan again</Button>
+      </div>
+
+      <template v-else-if="selected">
+        <OverviewView
+          v-if="tab === 'overview'"
+          :device="selected" :info="info" :app-count="appCount"
+          @navigate="tab = $event as Tab"
+        />
         <AppsView v-else-if="tab === 'apps'" :udid="selected.udid" />
         <FilesView v-else-if="tab === 'files'" :udid="selected.udid" />
         <BackupView v-else-if="tab === 'backup'" :udid="selected.udid" />
-        <VersionsView v-else :model="selected.model" />
-      </main>
-    </template>
+        <VersionsView v-else :model="selected.model" :current="selected.version" />
+      </template>
+    </main>
   </div>
 </template>
-
-<style scoped>
-.shell { max-width: 1100px; margin: 0 auto; padding: 16px; }
-
-header {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border);
-}
-.brand { font-weight: 600; font-size: 17px; margin-right: auto; }
-
-select {
-  font: inherit;
-  color: inherit;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 10px;
-  max-width: 320px;
-}
-
-nav { display: flex; gap: 6px; flex-wrap: wrap; margin: 14px 0; }
-main { min-height: 300px; }
-
-.empty { text-align: center; padding: 64px 16px; }
-.empty p { margin: 4px 0; }
-
-.notice {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  border-radius: 6px;
-  padding: 10px 12px;
-  margin: 14px 0;
-}
-.notice.danger { border-left-color: var(--danger); }
-</style>
