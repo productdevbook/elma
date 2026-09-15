@@ -1,25 +1,34 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { computed, ref, watch } from 'vue'
 import { open } from '@tauri-apps/plugin-dialog'
-import { FolderOpen, ShieldAlert, ShieldCheck, CheckCircle2, Upload, Lock } from 'lucide-vue-next'
+import {
+  FolderOpen, ShieldAlert, ShieldCheck, CheckCircle2, Upload, Lock,
+} from 'lucide-vue-next'
 import { api, type BackupEntry } from '@/api'
-import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
+import { formatBytes, formatDuration } from '@/format'
+import {
+  transfers, startBackup, startRestore, dismissResult,
+} from '@/stores/transfers'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
 
 const props = defineProps<{ udid: string }>()
 
 const encrypted = ref<boolean | null>(null)
 const directory = ref<string | null>(null)
-const running = ref(false)
-const percent = ref(0)
-const result = ref<string | null>(null)
 const error = ref<string | null>(null)
 
-let unlisten: UnlistenFn | null = null
+// Progress lives in the store, so it survives leaving this tab mid-transfer.
+const active = computed(() => transfers.active)
+const backingUp = computed(() => active.value?.kind === 'backup')
+const restoring = computed(() => active.value?.kind === 'restore')
+const busy = computed(() => active.value !== null)
+
+const result = computed(() => transfers.lastResult)
+const storeError = computed(() => transfers.lastError)
 
 async function loadEncryption() {
   try {
@@ -34,20 +43,8 @@ async function pickDirectory() {
   if (typeof picked === 'string') directory.value = picked
 }
 
-async function start() {
-  if (!directory.value) return
-  running.value = true
-  percent.value = 0
-  result.value = null
-  error.value = null
-  try {
-    const r = await api.backupCreate(directory.value, props.udid)
-    result.value = `${r.directory}/${r.udid}`
-  } catch (e: any) {
-    error.value = e?.message ?? String(e)
-  } finally {
-    running.value = false
-  }
+function start() {
+  if (directory.value) startBackup(directory.value, props.udid)
 }
 
 /* ---- restore ---------------------------------------------------------- */
@@ -55,17 +52,14 @@ async function start() {
 const found = ref<BackupEntry[] | null>(null)
 const chosen = ref<BackupEntry | null>(null)
 const password = ref('')
-const restoring = ref(false)
-const restorePercent = ref(0)
-const restoreDone = ref(false)
 const confirmed = ref(false)
-let unlistenRestore: UnlistenFn | null = null
 
 async function scanForBackups() {
   const dir = await open({ directory: true, multiple: false })
   if (typeof dir !== 'string') return
   chosen.value = null
   confirmed.value = false
+  error.value = null
   try {
     found.value = await api.backupScan(dir)
   } catch (e: any) {
@@ -74,31 +68,9 @@ async function scanForBackups() {
   }
 }
 
-async function runRestore() {
-  if (!chosen.value) return
-  restoring.value = true
-  restorePercent.value = 0
-  restoreDone.value = false
-  error.value = null
-  try {
-    await api.backupRestore(chosen.value.path, props.udid, password.value)
-    restoreDone.value = true
-  } catch (e: any) {
-    error.value = e?.message ?? String(e)
-  } finally {
-    restoring.value = false
-  }
+function runRestore() {
+  if (chosen.value) startRestore(chosen.value.path, props.udid, password.value)
 }
-
-onMounted(async () => {
-  unlisten = await listen<{ percent: number }>('backup.progress', e => {
-    percent.value = e.payload.percent
-  })
-  unlistenRestore = await listen<{ percent: number }>('restore.progress', e => {
-    restorePercent.value = e.payload.percent
-  })
-})
-onUnmounted(() => { unlisten?.(); unlistenRestore?.() })
 
 watch(() => props.udid, loadEncryption, { immediate: true })
 </script>
@@ -133,7 +105,7 @@ watch(() => props.udid, loadEncryption, { immediate: true })
     <Card>
       <CardContent class="space-y-4 px-4 py-4">
         <div class="flex items-center gap-3">
-          <Button variant="outline" size="sm" :disabled="running" @click="pickDirectory">
+          <Button variant="outline" size="sm" :disabled="busy" @click="pickDirectory">
             <FolderOpen class="size-3.5" /> Choose folder
           </Button>
           <span v-if="directory" class="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
@@ -142,31 +114,55 @@ watch(() => props.udid, loadEncryption, { immediate: true })
           <span v-else class="text-xs text-muted-foreground">No folder chosen</span>
         </div>
 
-        <div v-if="running" class="space-y-1.5">
-          <Progress :model-value="percent" class="h-1.5" />
-          <p class="text-xs tabular-nums text-muted-foreground">{{ percent.toFixed(0) }}% complete</p>
+        <div v-if="backingUp" class="space-y-2">
+          <Progress :model-value="active!.percent" class="h-1.5" />
+          <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs tabular-nums text-muted-foreground">
+            <span class="font-medium text-foreground">{{ active!.percent.toFixed(0) }}%</span>
+            <span v-if="active!.bytesDone">
+              {{ formatBytes(active!.bytesDone) }}<template v-if="active!.bytesTotal"> of ~{{ formatBytes(active!.bytesTotal) }}</template>
+            </span>
+            <span v-if="formatDuration(active!.etaSeconds)">
+              ~{{ formatDuration(active!.etaSeconds) }} left
+            </span>
+            <span v-if="active!.elapsedSeconds > 5" class="ml-auto">
+              {{ formatDuration(active!.elapsedSeconds) }} elapsed
+            </span>
+          </div>
+          <p v-if="!active!.bytesTotal" class="text-[11px] text-muted-foreground">
+            Sizing the backup — the total appears once it gets going.
+          </p>
         </div>
 
-        <Button class="w-full" :disabled="!directory || running" @click="start">
-          {{ running ? 'Backing up…' : 'Start backup' }}
+        <Button class="w-full" :disabled="!directory || busy" @click="start">
+          {{ backingUp ? 'Backing up…' : 'Start backup' }}
         </Button>
       </CardContent>
     </Card>
 
-    <Card v-if="result" class="border-emerald-500/40">
-      <CardContent class="flex gap-3 px-4 py-3.5">
+    <Card v-if="result?.kind === 'backup'" class="border-emerald-500/40">
+      <CardContent class="flex items-start gap-3 px-4 py-3.5">
         <CheckCircle2 class="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-500" />
-        <div class="min-w-0">
+        <div class="min-w-0 flex-1">
           <p class="text-sm font-medium">Backup complete</p>
-          <p class="mt-0.5 truncate font-mono text-xs text-muted-foreground">{{ result }}</p>
+          <p class="mt-0.5 truncate font-mono text-xs text-muted-foreground">{{ result.path }}</p>
+          <p v-if="result.bytes" class="mt-0.5 text-xs text-muted-foreground">
+            {{ formatBytes(result.bytes) }} written
+          </p>
         </div>
+        <button class="shrink-0 text-xs text-muted-foreground underline" @click="dismissResult">
+          Dismiss
+        </button>
       </CardContent>
     </Card>
 
+    <p v-if="storeError?.kind === 'backup'" class="text-sm text-destructive">
+      {{ storeError.message }}
+    </p>
     <p v-if="error" class="text-sm text-destructive">{{ error }}</p>
 
     <p class="text-xs text-muted-foreground">
-      The device must stay connected and unlocked for the whole backup.
+      The device must stay connected and unlocked for the whole backup. You can
+      switch tabs — it keeps running.
     </p>
 
     <!-- Restore -->
@@ -176,12 +172,10 @@ watch(() => props.udid, loadEncryption, { immediate: true })
       <Card>
         <CardContent class="space-y-4 px-4 py-4">
           <div class="flex items-center gap-3">
-            <Button variant="outline" size="sm" :disabled="restoring" @click="scanForBackups">
+            <Button variant="outline" size="sm" :disabled="busy" @click="scanForBackups">
               <FolderOpen class="size-3.5" /> Find backups
             </Button>
-            <span v-if="found" class="text-xs text-muted-foreground">
-              {{ found.length }} found
-            </span>
+            <span v-if="found" class="text-xs text-muted-foreground">{{ found.length }} found</span>
           </div>
 
           <div v-if="found?.length" class="space-y-1.5">
@@ -189,12 +183,11 @@ watch(() => props.udid, loadEncryption, { immediate: true })
               v-for="b in found" :key="b.path"
               class="flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors hover:bg-muted/50"
               :class="chosen?.path === b.path && 'border-primary bg-muted/50'"
+              :disabled="busy"
               @click="chosen = b; confirmed = false"
             >
               <div class="min-w-0 flex-1">
-                <p class="truncate text-sm font-medium">
-                  {{ b.device_name ?? b.udid }}
-                </p>
+                <p class="truncate text-sm font-medium">{{ b.device_name ?? b.udid }}</p>
                 <p class="truncate text-xs text-muted-foreground">
                   {{ b.product ?? '—' }}<template v-if="b.ios_version"> · iOS {{ b.ios_version }}</template>
                   <template v-if="b.date"> · {{ b.date.slice(0, 10) }}</template>
@@ -214,12 +207,11 @@ watch(() => props.udid, loadEncryption, { immediate: true })
             <Input
               v-if="chosen.encrypted"
               v-model="password" type="password"
-              placeholder="Backup password"
-              class="h-8 text-sm"
+              placeholder="Backup password" class="h-8 text-sm"
             />
 
             <label class="flex cursor-pointer items-start gap-2.5">
-              <input v-model="confirmed" type="checkbox" class="mt-0.5" />
+              <input v-model="confirmed" type="checkbox" class="mt-0.5" :disabled="busy" />
               <span class="text-xs leading-relaxed text-muted-foreground">
                 I understand this replaces what's on
                 <strong>{{ chosen.device_name ?? 'this device' }}</strong> with
@@ -227,16 +219,22 @@ watch(() => props.udid, loadEncryption, { immediate: true })
               </span>
             </label>
 
-            <div v-if="restoring" class="space-y-1.5">
-              <Progress :model-value="restorePercent" class="h-1.5" />
-              <p class="text-xs tabular-nums text-muted-foreground">
-                {{ restorePercent.toFixed(0) }}% restored
-              </p>
+            <div v-if="restoring" class="space-y-2">
+              <Progress :model-value="active!.percent" class="h-1.5" />
+              <div class="flex flex-wrap items-baseline gap-x-3 text-xs tabular-nums text-muted-foreground">
+                <span class="font-medium text-foreground">{{ active!.percent.toFixed(0) }}%</span>
+                <span v-if="formatDuration(active!.etaSeconds)">
+                  ~{{ formatDuration(active!.etaSeconds) }} left
+                </span>
+                <span v-if="active!.elapsedSeconds > 5" class="ml-auto">
+                  {{ formatDuration(active!.elapsedSeconds) }} elapsed
+                </span>
+              </div>
             </div>
 
             <Button
               class="w-full" variant="destructive"
-              :disabled="!confirmed || restoring || (chosen.encrypted && !password)"
+              :disabled="!confirmed || busy || (chosen.encrypted && !password)"
               @click="runRestore"
             >
               <Upload class="size-3.5" />
@@ -246,12 +244,19 @@ watch(() => props.udid, loadEncryption, { immediate: true })
         </CardContent>
       </Card>
 
-      <Card v-if="restoreDone" class="border-emerald-500/40">
-        <CardContent class="flex gap-3 px-4 py-3.5">
+      <Card v-if="result?.kind === 'restore'" class="border-emerald-500/40">
+        <CardContent class="flex items-start gap-3 px-4 py-3.5">
           <CheckCircle2 class="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-500" />
-          <p class="text-sm">Restore finished — the device is restarting.</p>
+          <p class="flex-1 text-sm">Restore finished — the device is restarting.</p>
+          <button class="shrink-0 text-xs text-muted-foreground underline" @click="dismissResult">
+            Dismiss
+          </button>
         </CardContent>
       </Card>
+
+      <p v-if="storeError?.kind === 'restore'" class="text-sm text-destructive">
+        {{ storeError.message }}
+      </p>
     </section>
   </div>
 </template>

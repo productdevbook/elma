@@ -6,6 +6,9 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
+import { transfers } from '@/stores/transfers'
+import { formatBytes, formatDuration } from '@/format'
+import { Progress } from '@/components/ui/progress'
 
 import OverviewView from '@/views/OverviewView.vue'
 import AppsView from '@/views/AppsView.vue'
@@ -138,7 +141,31 @@ onMounted(refresh)
         </button>
       </nav>
 
-      <p class="mt-auto px-4 py-3 text-[10px] leading-relaxed text-muted-foreground">
+      <!-- Visible from every tab: a transfer outlives the view that started it. -->
+      <div v-if="transfers.active" class="mt-auto border-t px-4 py-3">
+        <div class="flex items-center justify-between text-xs">
+          <span class="font-medium capitalize">{{ transfers.active.kind }}</span>
+          <span class="tabular-nums text-muted-foreground">
+            {{ transfers.active.percent.toFixed(0) }}%
+          </span>
+        </div>
+        <Progress :model-value="transfers.active.percent" class="mt-1.5 h-1" />
+        <p class="mt-1 text-[11px] tabular-nums text-muted-foreground">
+          <template v-if="transfers.active.bytesDone">
+            {{ formatBytes(transfers.active.bytesDone) }}
+          </template>
+          <template v-if="formatDuration(transfers.active.etaSeconds)">
+            · ~{{ formatDuration(transfers.active.etaSeconds) }} left
+          </template>
+        </p>
+        <button
+          v-if="tab !== 'backup'"
+          class="mt-1.5 text-[11px] text-muted-foreground underline"
+          @click="tab = 'backup'"
+        >Show details</button>
+      </div>
+
+      <p :class="transfers.active ? 'px-4 pb-3 text-[10px] leading-relaxed text-muted-foreground' : 'mt-auto px-4 py-3 text-[10px] leading-relaxed text-muted-foreground'">
         Erasing and reinstalling iOS is done in Finder — elma walks you through it.
       </p>
     </aside>
