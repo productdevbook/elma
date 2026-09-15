@@ -27,8 +27,8 @@ iTunes for that.
 
 ## Requirements
 
-- An iPhone or iPad, connected over USB and unlocked, paired with this computer
-- Python 3.10+ (development only — release builds ship their own)
+An iPhone or iPad, connected over USB and unlocked, paired with this computer.
+Release builds carry their own Python, so nothing else is needed to run one.
 
 ## Development
 
@@ -36,6 +36,14 @@ iTunes for that.
 bun install
 cd python && pip install -e . && cd ..
 bun run app
+```
+
+Release builds need the vendored Python runtime built first — it is not
+checked in:
+
+```bash
+bash scripts/bundle-python.sh
+bun run app:build
 ```
 
 `bun run typecheck` runs TypeScript 7 over the sources. The `typescript`

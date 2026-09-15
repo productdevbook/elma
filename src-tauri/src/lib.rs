@@ -56,18 +56,25 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            // In development the bridge runs from the repo; a packaged build
-            // ships its own interpreter next to the binary.
-            let python = std::env::var("ELMA_PYTHON")
-                .unwrap_or_else(|_| "python3".to_string());
-            let cwd = std::env::var("ELMA_BRIDGE_DIR")
+            // Resolve the interpreter: an explicit override first (used in
+            // development), then the runtime vendored into the bundle, then
+            // whatever python3 is on PATH as a last resort.
+            let resource_dir = app.path().resource_dir().ok();
+            let bridge_dir = std::env::var("ELMA_BRIDGE_DIR")
                 .map(std::path::PathBuf::from)
-                .unwrap_or_else(|_| {
-                    app.path()
-                        .resource_dir()
-                        .map(|d| d.join("python"))
-                        .unwrap_or_else(|_| std::path::PathBuf::from("python"))
-                });
+                .ok()
+                .or_else(|| resource_dir.as_ref().map(|d| d.join("python")))
+                .unwrap_or_else(|| std::path::PathBuf::from("python"));
+
+            let python = std::env::var("ELMA_PYTHON").ok().unwrap_or_else(|| {
+                let vendored = bridge_dir.join(".runtime/bin/python3");
+                if vendored.is_file() {
+                    vendored.to_string_lossy().into_owned()
+                } else {
+                    "python3".to_string()
+                }
+            });
+            let cwd = bridge_dir;
 
             // Progress events from the bridge become webview events under
             // the same name, so the UI listens for e.g. "backup.progress".

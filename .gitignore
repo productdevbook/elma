@@ -9,3 +9,4 @@ venv/
 .DS_Store
 bun.lockb
 src-tauri/gen/
+python/.runtime/

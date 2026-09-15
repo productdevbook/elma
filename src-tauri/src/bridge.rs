@@ -69,6 +69,7 @@ pub struct Bridge {
     stdin: Mutex<ChildStdin>,
     pending: Pending,
     next_id: AtomicU64,
+    last_error: Arc<Mutex<Option<String>>>,
     _child: Child,
 }
 
@@ -86,12 +87,31 @@ impl Bridge {
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()?;
 
         let stdin = child.stdin.take().ok_or(BridgeError::Closed)?;
         let stdout = child.stdout.take().ok_or(BridgeError::Closed)?;
+        let stderr = child.stderr.take().ok_or(BridgeError::Closed)?;
+
+        // A bridge that dies on import (missing dependency, wrong interpreter)
+        // would otherwise just look like a hang. Keep the tail of stderr so the
+        // failure can be shown instead of an empty window.
+        let last_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let err_slot = last_error.clone();
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            let mut tail: Vec<String> = Vec::new();
+            while let Ok(Some(line)) = lines.next_line().await {
+                eprintln!("[bridge] {line}");
+                tail.push(line);
+                if tail.len() > 20 {
+                    tail.remove(0);
+                }
+                *err_slot.lock().await = Some(tail.join("\n"));
+            }
+        });
         let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
 
         let reader_pending = pending.clone();
@@ -132,6 +152,7 @@ impl Bridge {
             stdin: Mutex::new(stdin),
             pending,
             next_id: AtomicU64::new(1),
+            last_error,
             _child: child,
         })
     }
@@ -151,6 +172,19 @@ impl Bridge {
             stdin.flush().await?;
         }
 
-        rx.await.map_err(|_| BridgeError::Closed)?
+        match rx.await {
+            Ok(outcome) => outcome,
+            Err(_) => {
+                // The bridge went away mid-call; its stderr says why.
+                let detail = self.last_error.lock().await.clone();
+                Err(match detail {
+                    Some(d) => BridgeError::Device {
+                        kind: "bridge_crashed".into(),
+                        message: d,
+                    },
+                    None => BridgeError::Closed,
+                })
+            }
+        }
     }
 }
