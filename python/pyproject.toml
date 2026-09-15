@@ -1,0 +1,14 @@
+[project]
+name = "elma-bridge"
+version = "0.1.0"
+description = "JSON-RPC bridge over pymobiledevice3 for elma"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0" }
+dependencies = ["pymobiledevice3>=11.12.5"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["elma_bridge"]
