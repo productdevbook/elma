@@ -21,6 +21,8 @@ pub enum BridgeError {
     Spawn(#[from] std::io::Error),
     #[error("bridge process is gone")]
     Closed,
+    #[error("the device did not answer in time")]
+    Timeout,
     #[error("{kind}: {message}")]
     Device { kind: String, message: String },
 }
@@ -33,6 +35,10 @@ impl Serialize for BridgeError {
             BridgeError::Device { kind, message } => {
                 m.serialize_entry("kind", kind)?;
                 m.serialize_entry("message", message)?;
+            }
+            BridgeError::Timeout => {
+                m.serialize_entry("kind", "timeout")?;
+                m.serialize_entry("message", &self.to_string())?;
             }
             other => {
                 m.serialize_entry("kind", "bridge")?;
@@ -157,6 +163,15 @@ impl Bridge {
         })
     }
 
+    /// Long-running methods get no deadline; everything else must answer
+    /// promptly or the UI is left staring at a spinner.
+    fn deadline_for(method: &str) -> Option<std::time::Duration> {
+        match method {
+            "backup.create" | "backup.restore" | "file.pull" => None,
+            _ => Some(std::time::Duration::from_secs(45)),
+        }
+    }
+
     pub async fn call(&self, method: &str, params: Value) -> Result<Value, BridgeError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
@@ -172,7 +187,19 @@ impl Bridge {
             stdin.flush().await?;
         }
 
-        match rx.await {
+        let received = match Self::deadline_for(method) {
+            Some(d) => match tokio::time::timeout(d, rx).await {
+                Ok(r) => r,
+                Err(_) => {
+                    // Drop the slot so a late reply isn't matched to nothing.
+                    self.pending.lock().await.remove(&id);
+                    return Err(BridgeError::Timeout);
+                }
+            },
+            None => rx.await,
+        };
+
+        match received {
             Ok(outcome) => outcome,
             Err(_) => {
                 // The bridge went away mid-call; its stderr says why.
