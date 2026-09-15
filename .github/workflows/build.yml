@@ -36,5 +36,6 @@ jobs:
           workspaces: src-tauri
 
       - run: bun install --frozen-lockfile
+      - run: bun run typecheck
       - run: bun run build
       - run: cargo build --manifest-path src-tauri/Cargo.toml --release

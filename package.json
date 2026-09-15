@@ -5,11 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vue-tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
     "app": "tauri dev",
-    "app:build": "tauri build"
+    "app:build": "tauri build",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
@@ -20,8 +21,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",
     "@vitejs/plugin-vue": "^6.0.9",
-    "typescript": "6.0.3",
-    "vite": "^8.3.0",
-    "vue-tsc": "^3.3.11"
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0"
   }
 }
