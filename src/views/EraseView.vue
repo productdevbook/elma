@@ -121,6 +121,34 @@ watch(() => props.device.udid, () => { reset(); loadChecks() }, { immediate: tru
       </p>
     </header>
 
+    <!-- Who does what, before anything else: the buttons are the user's job and
+         no app can press them, which is worth knowing up front rather than
+         discovering at the last step. -->
+    <Card class="bg-muted/40">
+      <CardContent class="px-4 py-3.5">
+        <p class="text-sm font-medium">How this works</p>
+        <ol class="mt-2 space-y-1.5 text-xs leading-relaxed text-muted-foreground">
+          <li class="flex gap-2">
+            <span class="font-mono text-foreground">1.</span>
+            <span><strong class="text-foreground">elma</strong> backs the device up and
+            checks what you'd lose.</span>
+          </li>
+          <li class="flex gap-2">
+            <span class="font-mono text-foreground">2.</span>
+            <span><strong class="text-foreground">You</strong> hold the buttons to put
+            the device in DFU mode. No app can do this — it's a hardware
+            sequence on purpose. elma counts the seconds for you.</span>
+          </li>
+          <li class="flex gap-2">
+            <span class="font-mono text-foreground">3.</span>
+            <span><strong class="text-foreground">Finder</strong> installs iOS. It's
+            Apple's own tool and recovers from a failure mid-flash better than
+            we could, so elma doesn't do the restore itself.</span>
+          </li>
+        </ol>
+      </CardContent>
+    </Card>
+
     <!-- What you'll end up on -->
     <Card v-if="target">
       <CardContent class="flex items-center gap-4 px-4 py-3.5">
@@ -248,8 +276,9 @@ watch(() => props.device.udid, () => { reset(); loadChecks() }, { immediate: tru
               </span>
             </div>
             <p class="text-xs leading-relaxed text-muted-foreground">
-              The timing is the hard part, so the steps are walked through one at
-              a time. Keep the cable connected the whole way.
+              You press the buttons on the device; elma just keeps time, because
+              the timing is the part that usually goes wrong. Keep the cable
+              connected the whole way.
             </p>
             <Button class="w-full" :disabled="!ready" @click="start">
               {{ ready ? 'Start the sequence' : 'Tick the boxes above first' }}

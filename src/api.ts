@@ -78,6 +78,7 @@ export interface BackupEncryption {
 export interface BackupResult {
   directory: string
   udid: string
+  bytes?: number
 }
 
 export interface BackupEntry {

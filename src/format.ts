@@ -17,3 +17,14 @@ export function formatCapacity(n: number | null | undefined): string {
   if (n == null) return '—'
   return `${Math.round(n / 1e9)} GB`
 }
+
+/** "4m 20s" / "1h 05m". Returns null when there's nothing meaningful to show. */
+export function formatDuration(seconds: number | null | undefined): string | null {
+  if (seconds == null || seconds < 0) return null
+  if (seconds < 60) return `${Math.round(seconds)}s`
+  const m = Math.floor(seconds / 60)
+  const s = Math.round(seconds % 60)
+  if (m < 60) return `${m}m ${String(s).padStart(2, '0')}s`
+  const h = Math.floor(m / 60)
+  return `${h}h ${String(m % 60).padStart(2, '0')}m`
+}
