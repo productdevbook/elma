@@ -80,6 +80,16 @@ export interface BackupResult {
   udid: string
 }
 
+export interface BackupEntry {
+  path: string
+  udid: string
+  device_name: string | null
+  product: string | null
+  ios_version: string | null
+  date: string | null
+  encrypted: boolean
+}
+
 export const api = {
   deviceList: () => invoke<Device[]>('device_list'),
   deviceInfo: (udid?: string) => invoke<DeviceInfo>('device_info', { params: { udid } }),
@@ -101,4 +111,10 @@ export const api = {
     invoke<BackupEncryption>('backup_encryption', { params: { udid } }),
   backupCreate: (directory: string, udid?: string, full = true) =>
     invoke<BackupResult>('backup_create', { params: { directory, udid, full } }),
+  backupScan: (directory: string) =>
+    invoke<BackupEntry[]>('backup_scan', { params: { directory } }),
+  backupRestore: (directory: string, udid?: string, password = '') =>
+    invoke<{ directory: string; udid: string; rebooted: boolean }>('backup_restore', {
+      params: { directory, udid, password },
+    }),
 }

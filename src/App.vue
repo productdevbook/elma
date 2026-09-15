@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { Smartphone, LayoutGrid, Grid3x3, FolderOpen, Archive, Download, RefreshCw } from 'lucide-vue-next'
+import { Smartphone, LayoutGrid, Grid3x3, FolderOpen, Archive, Download, RefreshCw, Eraser } from 'lucide-vue-next'
 import { api, type Device, type DeviceInfo } from '@/api'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -12,8 +12,9 @@ import AppsView from '@/views/AppsView.vue'
 import FilesView from '@/views/FilesView.vue'
 import BackupView from '@/views/BackupView.vue'
 import VersionsView from '@/views/VersionsView.vue'
+import EraseView from '@/views/EraseView.vue'
 
-type Tab = 'overview' | 'apps' | 'files' | 'backup' | 'versions'
+type Tab = 'overview' | 'apps' | 'files' | 'backup' | 'versions' | 'erase'
 
 const devices = ref<Device[]>([])
 const selected = ref<Device | null>(null)
@@ -29,6 +30,7 @@ const nav = [
   { id: 'files', label: 'Files', icon: FolderOpen },
   { id: 'backup', label: 'Backup', icon: Archive },
   { id: 'versions', label: 'iOS', icon: Download },
+  { id: 'erase', label: 'Erase', icon: Eraser },
 ] as const
 
 async function refresh() {
@@ -136,8 +138,8 @@ onMounted(refresh)
         </button>
       </nav>
 
-      <p class="mt-auto px-4 py-3 text-[10px] text-muted-foreground">
-        Read-only. Does not erase or restore.
+      <p class="mt-auto px-4 py-3 text-[10px] leading-relaxed text-muted-foreground">
+        Erasing and reinstalling iOS is done in Finder — elma walks you through it.
       </p>
     </aside>
 
@@ -165,7 +167,8 @@ onMounted(refresh)
         <AppsView v-else-if="tab === 'apps'" :udid="selected.udid" />
         <FilesView v-else-if="tab === 'files'" :udid="selected.udid" />
         <BackupView v-else-if="tab === 'backup'" :udid="selected.udid" />
-        <VersionsView v-else :model="selected.model" :current="selected.version" />
+        <VersionsView v-else-if="tab === 'versions'" :model="selected.model" :current="selected.version" />
+        <EraseView v-else :device="selected" :info="info" @navigate="tab = $event as Tab" />
       </template>
     </main>
   </div>

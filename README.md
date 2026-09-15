@@ -16,11 +16,15 @@ actually on the device.
 - **Files** — browse the media area (DCIM, Downloads, Books) over AFC and
   copy files or whole folders back to your computer.
 - **Device** — model, iOS build, serial, capacity, activation state.
-- **Backup** — full device backup with live progress, and an upfront warning
-  when backup encryption is off, since that silently drops saved passwords,
-  Wi-Fi networks and Health data.
+- **Backup** — full device backup with live progress, and restore back onto a
+  device. Warns upfront when backup encryption is off, since that silently
+  drops saved passwords, Wi-Fi networks and Health data.
 - **iOS versions** — which builds Apple currently signs for the connected
   device, fetched live.
+- **Erase** — a walkthrough for putting the device into DFU mode, with the
+  button sequence picked from its board identifier, plus the checks that are
+  unrecoverable if skipped: a backup, transferred two-factor codes, and Find My.
+  The restore itself stays in Finder.
 
 None of this needs root. elma does not restore or erase devices; use Finder or
 iTunes for that.

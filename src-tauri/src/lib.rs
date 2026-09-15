@@ -50,6 +50,8 @@ forward!(file_pull, "file.pull");
 forward!(backup_create, "backup.create");
 forward!(backup_info, "backup.info");
 forward!(backup_encryption, "backup.encryption");
+forward!(backup_scan, "backup.scan");
+forward!(backup_restore, "backup.restore");
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -113,6 +115,8 @@ pub fn run() {
             backup_create,
             backup_info,
             backup_encryption,
+            backup_scan,
+            backup_restore,
         ])
         .run(tauri::generate_context!())
         .expect("error while running elma");

@@ -2,8 +2,10 @@
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
-import { FolderOpen, ShieldAlert, ShieldCheck, CheckCircle2 } from 'lucide-vue-next'
-import { api } from '@/api'
+import { FolderOpen, ShieldAlert, ShieldCheck, CheckCircle2, Upload, Lock } from 'lucide-vue-next'
+import { api, type BackupEntry } from '@/api'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
@@ -48,12 +50,55 @@ async function start() {
   }
 }
 
+/* ---- restore ---------------------------------------------------------- */
+
+const found = ref<BackupEntry[] | null>(null)
+const chosen = ref<BackupEntry | null>(null)
+const password = ref('')
+const restoring = ref(false)
+const restorePercent = ref(0)
+const restoreDone = ref(false)
+const confirmed = ref(false)
+let unlistenRestore: UnlistenFn | null = null
+
+async function scanForBackups() {
+  const dir = await open({ directory: true, multiple: false })
+  if (typeof dir !== 'string') return
+  chosen.value = null
+  confirmed.value = false
+  try {
+    found.value = await api.backupScan(dir)
+  } catch (e: any) {
+    error.value = e?.message ?? String(e)
+    found.value = []
+  }
+}
+
+async function runRestore() {
+  if (!chosen.value) return
+  restoring.value = true
+  restorePercent.value = 0
+  restoreDone.value = false
+  error.value = null
+  try {
+    await api.backupRestore(chosen.value.path, props.udid, password.value)
+    restoreDone.value = true
+  } catch (e: any) {
+    error.value = e?.message ?? String(e)
+  } finally {
+    restoring.value = false
+  }
+}
+
 onMounted(async () => {
   unlisten = await listen<{ percent: number }>('backup.progress', e => {
     percent.value = e.payload.percent
   })
+  unlistenRestore = await listen<{ percent: number }>('restore.progress', e => {
+    restorePercent.value = e.payload.percent
+  })
 })
-onUnmounted(() => unlisten?.())
+onUnmounted(() => { unlisten?.(); unlistenRestore?.() })
 
 watch(() => props.udid, loadEncryption, { immediate: true })
 </script>
@@ -123,5 +168,90 @@ watch(() => props.udid, loadEncryption, { immediate: true })
     <p class="text-xs text-muted-foreground">
       The device must stay connected and unlocked for the whole backup.
     </p>
+
+    <!-- Restore -->
+    <section class="space-y-2.5 border-t pt-5">
+      <h2 class="text-sm font-medium">Restore a backup</h2>
+
+      <Card>
+        <CardContent class="space-y-4 px-4 py-4">
+          <div class="flex items-center gap-3">
+            <Button variant="outline" size="sm" :disabled="restoring" @click="scanForBackups">
+              <FolderOpen class="size-3.5" /> Find backups
+            </Button>
+            <span v-if="found" class="text-xs text-muted-foreground">
+              {{ found.length }} found
+            </span>
+          </div>
+
+          <div v-if="found?.length" class="space-y-1.5">
+            <button
+              v-for="b in found" :key="b.path"
+              class="flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left transition-colors hover:bg-muted/50"
+              :class="chosen?.path === b.path && 'border-primary bg-muted/50'"
+              @click="chosen = b; confirmed = false"
+            >
+              <div class="min-w-0 flex-1">
+                <p class="truncate text-sm font-medium">
+                  {{ b.device_name ?? b.udid }}
+                </p>
+                <p class="truncate text-xs text-muted-foreground">
+                  {{ b.product ?? '—' }}<template v-if="b.ios_version"> · iOS {{ b.ios_version }}</template>
+                  <template v-if="b.date"> · {{ b.date.slice(0, 10) }}</template>
+                </p>
+              </div>
+              <Badge v-if="b.encrypted" variant="secondary" class="shrink-0 text-[10px]">
+                <Lock class="size-2.5" /> Encrypted
+              </Badge>
+            </button>
+          </div>
+          <p v-else-if="found" class="text-xs text-muted-foreground">
+            No backups in that folder. Pick the folder containing them, or one
+            backup's own folder.
+          </p>
+
+          <template v-if="chosen">
+            <Input
+              v-if="chosen.encrypted"
+              v-model="password" type="password"
+              placeholder="Backup password"
+              class="h-8 text-sm"
+            />
+
+            <label class="flex cursor-pointer items-start gap-2.5">
+              <input v-model="confirmed" type="checkbox" class="mt-0.5" />
+              <span class="text-xs leading-relaxed text-muted-foreground">
+                I understand this replaces what's on
+                <strong>{{ chosen.device_name ?? 'this device' }}</strong> with
+                the backup, and the device restarts when it finishes.
+              </span>
+            </label>
+
+            <div v-if="restoring" class="space-y-1.5">
+              <Progress :model-value="restorePercent" class="h-1.5" />
+              <p class="text-xs tabular-nums text-muted-foreground">
+                {{ restorePercent.toFixed(0) }}% restored
+              </p>
+            </div>
+
+            <Button
+              class="w-full" variant="destructive"
+              :disabled="!confirmed || restoring || (chosen.encrypted && !password)"
+              @click="runRestore"
+            >
+              <Upload class="size-3.5" />
+              {{ restoring ? 'Restoring…' : 'Restore to this device' }}
+            </Button>
+          </template>
+        </CardContent>
+      </Card>
+
+      <Card v-if="restoreDone" class="border-emerald-500/40">
+        <CardContent class="flex gap-3 px-4 py-3.5">
+          <CheckCircle2 class="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-500" />
+          <p class="text-sm">Restore finished — the device is restarting.</p>
+        </CardContent>
+      </Card>
+    </section>
   </div>
 </template>

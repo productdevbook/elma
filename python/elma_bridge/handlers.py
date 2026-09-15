@@ -14,6 +14,7 @@ import base64
 import hashlib
 import json
 import os
+import plistlib
 import urllib.request
 from typing import Any, Callable
 
@@ -386,6 +387,94 @@ def build_registry(emit: Callable[[str, Any], None]) -> dict[str, Callable]:
         async with Mobilebackup2Service(lockdown=ld) as svc:
             return {"enabled": bool(await svc.get_will_encrypt())}
 
+    async def backup_scan(directory: str) -> list[dict]:
+        """Finds backups in `directory`.
+
+        mobilebackup2 writes each one to <directory>/<udid>, so a folder can
+        hold several. Info.plist is read directly rather than through the
+        service because listing shouldn't need a connected device — you often
+        want to see what you have before plugging anything in.
+        """
+        found: list[dict] = []
+        if not os.path.isdir(directory):
+            raise ElmaError("not_found", f"no such folder: {directory}")
+
+        # Accept either the folder holding backups or one backup itself.
+        candidates = [directory] + [
+            os.path.join(directory, e) for e in sorted(os.listdir(directory))
+        ]
+        for path in candidates:
+            info_path = os.path.join(path, "Info.plist")
+            if not os.path.isfile(info_path):
+                continue
+            try:
+                with open(info_path, "rb") as f:
+                    info = plistlib.load(f)
+            except Exception:
+                continue
+
+            manifest = os.path.join(path, "Manifest.plist")
+            encrypted = False
+            try:
+                with open(manifest, "rb") as f:
+                    encrypted = bool(plistlib.load(f).get("IsEncrypted"))
+            except Exception:
+                pass
+
+            date = info.get("Last Backup Date")
+            found.append({
+                "path": path,
+                "udid": info.get("Target Identifier") or os.path.basename(path),
+                "device_name": info.get("Device Name"),
+                "product": info.get("Product Name") or info.get("Product Type"),
+                "ios_version": info.get("Product Version"),
+                "date": date.isoformat() if hasattr(date, "isoformat") else None,
+                "encrypted": encrypted,
+            })
+        return found
+
+    async def backup_restore(directory: str, udid: str | None = None,
+                             password: str = "", system: bool = False,
+                             reboot: bool = True, remove: bool = False,
+                             skip_apps: bool = False) -> dict:
+        """Restores a backup onto the connected device.
+
+        This overwrites what's on the device, so the caller is expected to have
+        confirmed. `copy=False` because copying a multi-gigabyte backup before
+        restoring doubles the disk needed for no benefit here — the source
+        folder is only read.
+        """
+        ld = await conn.get(udid)
+
+        def on_progress(percent) -> None:
+            try:
+                emit("restore.progress", {"percent": float(percent)})
+            except (TypeError, ValueError):
+                pass
+
+        async with Mobilebackup2Service(lockdown=ld) as svc:
+            try:
+                await svc.restore(
+                    backup_directory=directory,
+                    system=system,
+                    reboot=reboot,
+                    copy=False,
+                    settings=True,
+                    remove=remove,
+                    password=password,
+                    skip_apps=skip_apps,
+                    progress_callback=on_progress,
+                )
+            except Exception as e:
+                # A wrong password is the common case and worth naming.
+                text = str(e)
+                kind = ("bad_password"
+                        if "password" in text.lower() or "decrypt" in text.lower()
+                        else "restore_failed")
+                raise ElmaError(kind, text) from e
+
+        return {"directory": directory, "udid": ld.udid, "rebooted": reboot}
+
     return {
         "device.list": device_list,
         "device.info": device_info,
@@ -397,4 +486,6 @@ def build_registry(emit: Callable[[str, Any], None]) -> dict[str, Callable]:
         "backup.create": backup_create,
         "backup.info": backup_info,
         "backup.encryption": backup_encryption,
+        "backup.scan": backup_scan,
+        "backup.restore": backup_restore,
     }
