@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { ChevronRight, Folder, File as FileIcon, ArrowUp } from 'lucide-vue-next'
+import { ChevronRight, Folder, File as FileIcon, ArrowUp, Download, Check } from 'lucide-vue-next'
+import { open } from '@tauri-apps/plugin-dialog'
 import { api, type FileEntry } from '@/api'
 import { formatBytes } from '@/format'
 import { Button } from '@/components/ui/button'
@@ -38,6 +39,27 @@ function goTo(i: number) {
   load('/' + segments().slice(0, i + 1).join('/'))
 }
 
+/** Pulling is per-entry rather than a bulk action: the media area holds tens
+ *  of gigabytes, and a stray click on "download everything" is expensive. */
+const pulling = ref<string | null>(null)
+const pulled = ref<Set<string>>(new Set())
+const pullError = ref<string | null>(null)
+
+async function pull(e: FileEntry) {
+  const dir = await open({ directory: true, multiple: false })
+  if (typeof dir !== 'string') return
+  pulling.value = e.path
+  pullError.value = null
+  try {
+    await api.filePull(e.path, dir, props.udid)
+    pulled.value = new Set(pulled.value).add(e.path)
+  } catch (err: any) {
+    pullError.value = err?.message ?? String(err)
+  } finally {
+    pulling.value = null
+  }
+}
+
 watch(() => props.udid, () => load('/'), { immediate: true })
 </script>
 
@@ -65,29 +87,47 @@ watch(() => props.udid, () => load('/'), { immediate: true })
       <p v-else-if="!entries.length" class="p-6 text-sm text-muted-foreground">Empty folder.</p>
 
       <div v-else class="divide-y divide-border/50">
-        <button
+        <div
           v-for="e in entries" :key="e.path"
-          class="flex w-full items-center gap-3 px-6 py-2 text-left text-sm transition-colors hover:bg-muted/50 disabled:cursor-default"
-          :disabled="!e.is_dir"
-          @click="e.is_dir && load(e.path)"
+          class="group flex items-center gap-3 px-6 py-2 text-sm transition-colors hover:bg-muted/50"
         >
-          <component
-            :is="e.is_dir ? Folder : FileIcon"
-            class="size-4 shrink-0"
-            :class="e.is_dir ? 'text-primary' : 'text-muted-foreground'"
-          />
-          <span class="min-w-0 flex-1 truncate">{{ e.name }}</span>
+          <button
+            class="flex min-w-0 flex-1 items-center gap-3 text-left disabled:cursor-default"
+            :disabled="!e.is_dir"
+            @click="e.is_dir && load(e.path)"
+          >
+            <component
+              :is="e.is_dir ? Folder : FileIcon"
+              class="size-4 shrink-0"
+              :class="e.is_dir ? 'text-primary' : 'text-muted-foreground'"
+            />
+            <span class="min-w-0 flex-1 truncate">{{ e.name }}</span>
+          </button>
+
           <span class="shrink-0 text-xs tabular-nums text-muted-foreground">
             {{ e.is_dir ? '' : formatBytes(e.size_bytes) }}
           </span>
-          <span class="hidden w-36 shrink-0 text-right text-xs text-muted-foreground sm:block">
+          <span class="hidden w-32 shrink-0 text-right text-xs text-muted-foreground sm:block">
             {{ e.modified.slice(0, 16) }}
           </span>
-        </button>
+
+          <Button
+            variant="ghost" size="icon"
+            class="size-7 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
+            :class="(pulled.has(e.path) || pulling === e.path) && 'opacity-100'"
+            :disabled="pulling !== null"
+            :title="`Save ${e.name} to this computer`"
+            @click="pull(e)"
+          >
+            <Check v-if="pulled.has(e.path)" class="size-3.5 text-emerald-600 dark:text-emerald-500" />
+            <Download v-else :class="['size-3.5', pulling === e.path && 'animate-pulse']" />
+          </Button>
+        </div>
       </div>
     </div>
 
     <footer class="border-t px-6 py-2.5">
+      <p v-if="pullError" class="mb-1 text-xs text-destructive">{{ pullError }}</p>
       <p class="text-xs text-muted-foreground">
         The media area only — app sandboxes aren't reachable over AFC.
       </p>

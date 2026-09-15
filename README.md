@@ -13,7 +13,8 @@ actually on the device.
 - **Apps** — every installed app with version, size and whether it came from
   the App Store. Sideloaded apps are flagged, because those are the ones that
   won't come back on their own after a wipe. Exports to CSV.
-- **Files** — browse the media area (DCIM, Downloads, Books) over AFC.
+- **Files** — browse the media area (DCIM, Downloads, Books) over AFC and
+  copy files or whole folders back to your computer.
 - **Device** — model, iOS build, serial, capacity, activation state.
 - **Backup** — full device backup with live progress, and an upfront warning
   when backup encryption is off, since that silently drops saved passwords,

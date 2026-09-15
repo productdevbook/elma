@@ -89,6 +89,10 @@ export const api = {
     invoke<FileEntry[]>('file_list', { params: { path, udid } }),
   signedVersions: (model: string) =>
     invoke<SignedVersion[]>('ios_signed_versions', { params: { model } }),
+  filePull: (remote: string, localDir: string, udid?: string) =>
+    invoke<{ path: string; is_dir: boolean }>('file_pull', {
+      params: { remote, local_dir: localDir, udid },
+    }),
   backupEncryption: (udid?: string) =>
     invoke<BackupEncryption>('backup_encryption', { params: { udid } }),
   backupCreate: (directory: string, udid?: string, full = true) =>

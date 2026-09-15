@@ -45,6 +45,7 @@ forward!(device_info, "device.info");
 forward!(app_list, "app.list");
 forward!(file_list, "file.list");
 forward!(ios_signed_versions, "ios.signedVersions");
+forward!(file_pull, "file.pull");
 forward!(backup_create, "backup.create");
 forward!(backup_info, "backup.info");
 forward!(backup_encryption, "backup.encryption");
@@ -99,6 +100,7 @@ pub fn run() {
             app_list,
             file_list,
             ios_signed_versions,
+            file_pull,
             backup_create,
             backup_info,
             backup_encryption,

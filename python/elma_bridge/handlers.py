@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import urllib.request
 from typing import Any, Callable
 
@@ -264,6 +265,40 @@ def build_registry(emit: Callable[[str, Any], None]) -> dict[str, Callable]:
             if f.get("signed")
         ]
 
+    async def file_pull(remote: str, local_dir: str,
+                       udid: str | None = None) -> dict:
+        """Copies one file or folder off the device into `local_dir`.
+
+        Folders are pulled recursively. Unreadable entries are skipped rather
+        than aborting the whole transfer — a media folder usually has a few
+        the device won't hand over.
+        """
+        ld = await conn.get(udid)
+        name = remote.rstrip("/").rsplit("/", 1)[-1] or "device"
+        target = os.path.join(local_dir, name)
+
+        async with AfcService(lockdown=ld) as afc:
+            try:
+                info = await afc.stat(remote)
+            except Exception as e:
+                raise ElmaError("not_found", f"{remote}: {e}") from e
+
+            is_dir = info.get("st_ifmt") == "S_IFDIR"
+            try:
+                if is_dir:
+                    os.makedirs(target, exist_ok=True)
+                    await afc.pull(remote, target, ignore_errors=True,
+                                   progress_bar=False)
+                else:
+                    data = await afc.get_file_contents(remote)
+                    os.makedirs(local_dir, exist_ok=True)
+                    with open(target, "wb") as f:
+                        f.write(data)
+            except Exception as e:
+                raise ElmaError("pull_failed", str(e)) from e
+
+        return {"path": target, "is_dir": is_dir}
+
     # --- backup ---------------------------------------------------------
 
     async def backup_create(directory: str, udid: str | None = None,
@@ -315,6 +350,7 @@ def build_registry(emit: Callable[[str, Any], None]) -> dict[str, Callable]:
         "app.list": app_list,
         "file.list": file_list,
         "ios.signedVersions": signed_versions,
+        "file.pull": file_pull,
         "backup.create": backup_create,
         "backup.info": backup_info,
         "backup.encryption": backup_encryption,
