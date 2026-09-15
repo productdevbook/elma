@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import AppIcon from '@/components/AppIcon.vue'
 
 const props = defineProps<{ udid: string }>()
 
@@ -101,10 +102,10 @@ watch([() => props.udid, kind], load, { immediate: true })
         <thead class="sticky top-0 bg-background/95 backdrop-blur">
           <tr class="border-b text-xs text-muted-foreground">
             <th class="px-6 py-2 text-left font-medium">Name</th>
-            <th class="px-3 py-2 text-left font-medium">Bundle id</th>
-            <th class="px-3 py-2 text-right font-medium">Version</th>
-            <th class="px-3 py-2 text-right font-medium">Size</th>
-            <th class="px-6 py-2 text-right font-medium">Source</th>
+            <th class="hidden w-[30%] px-3 py-2 text-left font-medium lg:table-cell">Bundle id</th>
+            <th class="w-20 px-3 py-2 text-right font-medium">Version</th>
+            <th class="w-20 px-3 py-2 text-right font-medium">Size</th>
+            <th class="w-28 px-6 py-2 text-right font-medium">Source</th>
           </tr>
         </thead>
         <tbody>
@@ -112,8 +113,13 @@ watch([() => props.udid, kind], load, { immediate: true })
             v-for="a in shown" :key="a.bundle_id"
             class="border-b border-border/50 transition-colors hover:bg-muted/50"
           >
-            <td class="max-w-0 truncate px-6 py-2 font-medium">{{ a.name ?? '—' }}</td>
-            <td class="max-w-0 truncate px-3 py-2 font-mono text-xs text-muted-foreground">{{ a.bundle_id }}</td>
+            <td class="max-w-0 px-6 py-1.5">
+              <div class="flex items-center gap-2.5">
+                <AppIcon :bundle-id="a.bundle_id" :udid="udid" />
+                <span class="truncate font-medium">{{ a.name ?? '—' }}</span>
+              </div>
+            </td>
+            <td class="hidden max-w-0 truncate px-3 py-2 font-mono text-xs text-muted-foreground lg:table-cell">{{ a.bundle_id }}</td>
             <td class="whitespace-nowrap px-3 py-2 text-right text-xs tabular-nums text-muted-foreground">{{ a.version ?? '—' }}</td>
             <td class="whitespace-nowrap px-3 py-2 text-right text-xs tabular-nums text-muted-foreground">{{ formatBytes(a.size_bytes) }}</td>
             <td class="whitespace-nowrap px-6 py-2 text-right">

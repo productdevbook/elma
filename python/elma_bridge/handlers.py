@@ -10,6 +10,8 @@ required for developer/remote services, which are out of scope for v1.
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
 import os
 import urllib.request
@@ -19,6 +21,7 @@ from pymobiledevice3.lockdown import create_using_usbmux
 from pymobiledevice3.usbmux import list_devices
 from pymobiledevice3.services.installation_proxy import InstallationProxyService
 from pymobiledevice3.services.afc import AfcService
+from pymobiledevice3.services.springboard import SpringBoardServicesService
 from pymobiledevice3.services.mobilebackup2 import Mobilebackup2Service
 
 
@@ -213,6 +216,45 @@ def build_registry(emit: Callable[[str, Any], None]) -> dict[str, Callable]:
         out.sort(key=lambda a: (a["name"] or a["bundle_id"]).lower())
         return out
 
+    async def app_icons(bundle_ids: list[str],
+                        udid: str | None = None) -> dict[str, str | None]:
+        """Icon PNGs for the given bundle ids, as data URLs.
+
+        Called per visible batch rather than for the whole list: icons run
+        4-65 KB each, so fetching all of them up front would move tens of
+        megabytes for rows nobody scrolled to. A missing icon maps to null so
+        the caller can stop asking for it.
+        """
+        ld = await conn.get(udid)
+        out: dict[str, str | None] = {}
+
+        # SpringBoard answers an unknown bundle id with a generic placeholder
+        # instead of an error. It's byte-identical every time, so learn its
+        # digest once and treat later matches as "no icon".
+        placeholder: str | None = None
+
+        async with SpringBoardServicesService(lockdown=ld) as sb:
+            try:
+                probe = await sb.get_icon_pngdata("elma.icon.probe.invalid")
+                placeholder = hashlib.sha256(probe).hexdigest()
+            except Exception:
+                pass
+
+            for bundle_id in bundle_ids:
+                try:
+                    png = await sb.get_icon_pngdata(bundle_id)
+                except Exception:
+                    out[bundle_id] = None
+                    continue
+                if placeholder and hashlib.sha256(png).hexdigest() == placeholder:
+                    out[bundle_id] = None
+                    continue
+                out[bundle_id] = (
+                    "data:image/png;base64,"
+                    + base64.b64encode(png).decode("ascii")
+                )
+        return out
+
     # --- files ---------------------------------------------------------
 
     async def file_list(path: str = "/", udid: str | None = None) -> list[dict]:
@@ -348,6 +390,7 @@ def build_registry(emit: Callable[[str, Any], None]) -> dict[str, Callable]:
         "device.list": device_list,
         "device.info": device_info,
         "app.list": app_list,
+        "app.icons": app_icons,
         "file.list": file_list,
         "ios.signedVersions": signed_versions,
         "file.pull": file_pull,
